@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Box Code Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg: #17191b;
+    --panel: #1f2225;
+    --bezel: #0d0e10;
+    --led-off: #3a3f42;
+    --led-green: #34d17c;
+    --led-red: #e2544a;
+    --led-amber: #e8a83c;
+    --text: #e7e9ea;
+    --text-dim: #8b9296;
+    --mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    overscroll-behavior:none;
+  }
+  #app{
+    max-width:480px; margin:0 auto; min-height:100dvh;
+    display:flex; flex-direction:column;
+    padding:14px 14px 22px;
+  }
+  header{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:6px 4px 16px;
+  }
+  header h1{
+    font-size:15px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+    margin:0; color:var(--text);
+  }
+  header .unit-id{
+    font-family:var(--mono); font-size:11px; color:var(--text-dim);
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid #2c3033;
+    border-radius:10px;
+    padding:16px;
+    margin-bottom:14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 6px 16px rgba(0,0,0,0.25);
+  }
+  .panel-label{
+    font-size:10.5px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase;
+    color:var(--text-dim); margin:0 0 10px;
+  }
+
+  /* Reference display - looks like a small digital readout */
+  .readout{
+    background:var(--bezel);
+    border-radius:6px;
+    padding:14px 16px;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:10px;
+  }
+  .readout .code{
+    font-family:var(--mono); font-size:22px; font-weight:700; letter-spacing:0.08em;
+    color:var(--led-amber);
+    text-shadow: 0 0 10px rgba(232,168,60,0.35);
+    word-break:break-all;
+  }
+  .readout .code.empty{ color:#4a4f52; font-size:14px; font-weight:500; letter-spacing:0.02em; text-shadow:none;}
+
+  .row{ display:flex; gap:8px; margin-top:12px; }
+  button{
+    font-family:var(--sans); font-weight:600; font-size:13px;
+    border:none; border-radius:7px; cursor:pointer;
+    padding:11px 14px;
+    transition: transform 0.06s ease, filter 0.15s ease;
+  }
+  button:active{ transform:scale(0.97); }
+  .btn-primary{ background:#3a3f42; color:var(--text); flex:1; }
+  .btn-primary:hover{ filter:brightness(1.15); }
+  .btn-ghost{ background:transparent; color:var(--text-dim); border:1px solid #34383b; flex:1; }
+  .btn-ghost:hover{ color:var(--text); border-color:#4a4f52; }
+  input[type=file]{ display:none; }
+  input[type=text]{
+    width:100%; background:var(--bezel); border:1px solid #2c3033; border-radius:6px;
+    color:var(--text); font-family:var(--mono); font-size:16px; letter-spacing:0.06em;
+    padding:11px 12px; text-transform:uppercase;
+  }
+  input[type=text]:focus{ outline:none; border-color:#565b5e; }
+
+  /* Camera / scan zone */
+  .scan-shell{
+    position:relative;
+    border-radius:10px;
+    overflow:hidden;
+    background:#000;
+    aspect-ratio: 3/4;
+  }
+  video, canvas.overlay{
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+  }
+  canvas.overlay{ pointer-events:none; }
+  .frame-guide{
+    position:absolute; inset:14%; border:2px dashed rgba(255,255,255,0.35); border-radius:8px;
+    pointer-events:none;
+  }
+  .status-strip{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:10px 12px 12px;
+    background:linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .led-row{ display:flex; align-items:center; gap:8px; }
+  .led{
+    width:11px; height:11px; border-radius:50%;
+    background:var(--led-off);
+    box-shadow: inset 0 1px 1px rgba(0,0,0,0.4);
+    flex-shrink:0;
+  }
+  .led.on-green{ background:var(--led-green); box-shadow:0 0 8px 1px rgba(52,209,124,0.7); }
+  .led.on-red{ background:var(--led-red); box-shadow:0 0 8px 1px rgba(226,84,74,0.7); }
+  .led.on-amber{ background:var(--led-amber); box-shadow:0 0 8px 1px rgba(232,168,60,0.7); animation:pulse 1s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.45;} }
+  .status-text{
+    font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--text);
+  }
+  .debug-line{
+    font-family:var(--mono); font-size:10.5px; color:rgba(231,233,234,0.55);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  .no-camera{
+    display:flex; align-items:center; justify-content:center; height:100%;
+    color:var(--text-dim); font-size:13px; text-align:center; padding:20px;
+  }
+
+  .shutter-row{
+    display:flex; align-items:center; justify-content:center; gap:18px;
+    padding:16px 0 4px;
+  }
+  .shutter{
+    width:64px; height:64px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #4a4f52, #2a2d2f);
+    border:3px solid #55595c;
+    display:flex; align-items:center; justify-content:center;
+    color:var(--text); font-size:10px; font-weight:700; letter-spacing:0.06em;
+  }
+  .shutter:active{ transform:scale(0.94); }
+  .switch-cam{
+    width:44px; height:44px; border-radius:50%;
+    background:transparent; border:1px solid #34383b; color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+  }
+
+  .tally{
+    display:flex; justify-content:space-between; font-family:var(--mono); font-size:11px; color:var(--text-dim);
+    padding-top:2px;
+  }
+  .tally span.count{ color:var(--text); font-weight:700; }
+
+  footer{ text-align:center; padding-top:8px; }
+  footer p{ margin:0; font-size:10.5px; color:#4a4f52; font-family:var(--mono); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1>Box Code Scanner</h1>
+    <span class="unit-id" id="clock">--:--:--</span>
+  </header>
+
+  <!-- Reference code panel -->
+  <div class="panel">
+    <p class="panel-label">Target Code</p>
+    <div class="readout">
+      <span class="code empty" id="targetDisplay">Belum ditetapkan</span>
+    </div>
+    <div class="row">
+      <button class="btn-primary" id="btnUploadRef">Muat Naik Gambar</button>
+      <button class="btn-ghost" id="btnTypeRef">Taip Manual</button>
+    </div>
+    <input type="text" id="manualInput" placeholder="cth. LB6W05" style="display:none; margin-top:10px;">
+    <input type="file" id="refFileInput" accept="image/*" capture="environment">
+  </div>
+
+  <!-- Camera panel -->
+  <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+    <p class="panel-label">Imbas Kotak</p>
+    <div class="scan-shell" id="scanShell">
+      <div class="no-camera" id="noCameraMsg">Tekan "Mula Kamera" untuk buka kamera</div>
+      <video id="video" autoplay playsinline muted style="display:none;"></video>
+      <div class="frame-guide" id="frameGuide" style="display:none;"></div>
+      <div class="status-strip" id="statusStrip" style="display:none;">
+        <div class="led-row">
+          <div class="led" id="ledIndicator"></div>
+          <span class="status-text" id="statusText">Bersedia</span>
+        </div>
+        <div class="debug-line" id="debugLine">&nbsp;</div>
+      </div>
+    </div>
+
+    <div class="shutter-row" id="shutterRow" style="display:none;">
+      <button class="switch-cam" id="btnSwitchCam" title="Tukar kamera">⟲</button>
+      <div class="shutter" id="btnShutter">SWEEP</div>
+      <div style="width:44px;"></div>
+    </div>
+
+    <div class="row" id="cameraToggleRow">
+      <button class="btn-primary" id="btnStartCamera">Mula Kamera</button>
+    </div>
+
+    <div class="tally">
+      <span>Sepah: <span class="count" id="tallyMatch">0</span> padan</span>
+      <span><span class="count" id="tallyNoMatch">0</span> tak padan</span>
+    </div>
+  </div>
+
+  <footer><p>OCR berjalan terus dalam browser — tiada data dimuat naik</p></footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- State ----------
+  let targetCode = '';       // stripped, uppercase reference code
+  let stream = null;
+  let facingMode = 'environment';
+  let scanning = false;      // passive loop active
+  let busy = false;          // an OCR call is in flight
+  let sweepRequested = false;
+  let matchCount = 0, noMatchCount = 0;
+  let lastLockTime = 0;
+
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const targetDisplay = $('targetDisplay');
+  const manualInput = $('manualInput');
+  const refFileInput = $('refFileInput');
+  const video = $('video');
+  const noCameraMsg = $('noCameraMsg');
+  const frameGuide = $('frameGuide');
+  const statusStrip = $('statusStrip');
+  const ledIndicator = $('ledIndicator');
+  const statusText = $('statusText');
+  const debugLine = $('debugLine');
+  const shutterRow = $('shutterRow');
+  const cameraToggleRow = $('cameraToggleRow');
+  const tallyMatch = $('tallyMatch');
+  const tallyNoMatch = $('tallyNoMatch');
+  const clock = $('clock');
+
+  // ---------- Clock (cosmetic, grounds the "device" feel) ----------
+  setInterval(() => {
+    clock.textContent = new Date().toLocaleTimeString('en-GB', { hour12:false });
+  }, 1000);
+
+  // ---------- Text helpers ----------
+  function stripText(s){
+    return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  function levenshtein(a, b){
+    const m = a.length, n = b.length;
+    if (m === 0) return n;
+    if (n === 0) return m;
+    let prev = new Array(n + 1);
+    let curr = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++){
+      curr[0] = i;
+      for (let j = 1; j <= n; j++){
+        const cost = a[i-1] === b[j-1] ? 0 : 1;
+        curr[j] = Math.min(
+          prev[j] + 1,      // deletion
+          curr[j-1] + 1,    // insertion
+          prev[j-1] + cost  // substitution
+        );
+      }
+      [prev, curr] = [curr, prev];
+    }
+    return prev[n];
+  }
+
+  // Sliding window fuzzy match: look for a substring of `haystack` whose length
+  // is close to target.length, with edit distance <= threshold.
+  function bestFuzzyMatch(haystack, target, threshold = 1){
+    if (!target) return { distance: Infinity, found: false };
+    const tLen = target.length;
+    let best = Infinity;
+    if (haystack.length < tLen - threshold) {
+      return { distance: levenshtein(haystack, target), found: false };
+    }
+    for (let start = 0; start <= haystack.length - Math.max(1, tLen - threshold); start++){
+      for (let len = tLen - threshold; len <= tLen + threshold; len++){
+        if (len < 1 || start + len > haystack.length) continue;
+        const window = haystack.substr(start, len);
+        const d = levenshtein(window, target);
+        if (d < best) best = d;
+        if (best === 0) break;
+      }
+      if (best === 0) break;
+    }
+    return { distance: best, found: best <= threshold };
+  }
+
+  function setTarget(raw){
+    targetCode = stripText(raw);
+    if (targetCode){
+      targetDisplay.textContent = targetCode;
+      targetDisplay.classList.remove('empty');
+    } else {
+      targetDisplay.textContent = 'Belum ditetapkan';
+      targetDisplay.classList.add('empty');
+    }
+  }
+
+  // ---------- Reference input ----------
+  $('btnTypeRef').addEventListener('click', () => {
+    manualInput.style.display = manualInput.style.display === 'none' ? 'block' : 'none';
+    if (manualInput.style.display === 'block') manualInput.focus();
+  });
+  manualInput.addEventListener('input', () => setTarget(manualInput.value));
+
+  $('btnUploadRef').addEventListener('click', () => refFileInput.click());
+  refFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    statusText.textContent = 'Membaca kod rujukan…';
+    try {
+      const dataUrl = await fileToDownscaledDataUrl(file, 1000);
+      const text = await ocrWithTimeout(dataUrl, 8000);
+      const stripped = stripText(text);
+      if (stripped){
+        setTarget(stripped);
+      } else {
+        alert('Tak dapat kesan kod. Sila taip manual.');
+      }
+    } catch (err){
+      console.error(err);
+      alert('OCR gagal / timeout. Sila taip kod manual.');
+    }
+  });
+
+  // ---------- Image downscale ----------
+  function fileToDownscaledDataUrl(file, maxDim){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = () => { img.src = reader.result; };
+      reader.onerror = reject;
+      img.onload = () => {
+        const canvas = downscaleToCanvas(img, maxDim);
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
+      };
+      img.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function downscaleToCanvas(imgSource, maxDim, rotationDeg = 0){
+    const srcW = imgSource.videoWidth || imgSource.width;
+    const srcH = imgSource.videoHeight || imgSource.height;
+    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+    const w = Math.round(srcW * scale);
+    const h = Math.round(srcH * scale);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    if (rotationDeg === 90 || rotationDeg === 270){
+      canvas.width = h; canvas.height = w;
+    } else {
+      canvas.width = w; canvas.height = h;
+    }
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(rotationDeg * Math.PI / 180);
+    ctx.drawImage(imgSource, -w / 2, -h / 2, w, h);
+    ctx.restore();
+    return canvas;
+  }
+
+  // ---------- OCR with timeout ----------
+  let tesseractWorkerPromise = null;
+  function getWorker(){
+    if (!tesseractWorkerPromise){
+      tesseractWorkerPromise = Tesseract.createWorker('eng');
+    }
+    return tesseractWorkerPromise;
+  }
+
+  async function ocrWithTimeout(imageSource, timeoutMs){
+    const worker = await getWorker();
+    const ocrPromise = worker.recognize(imageSource).then(r => r.data.text);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('OCR timeout')), timeoutMs)
+    );
+    return Promise.race([ocrPromise, timeoutPromise]);
+  }
+
+  // ---------- Camera ----------
+  $('btnStartCamera').addEventListener('click', startCamera);
+  $('btnSwitchCam').addEventListener('click', async () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    stopCamera();
+    await startCamera();
+  });
+  $('btnShutter').addEventListener('click', () => { sweepRequested = true; });
+
+  async function startCamera(){
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 960 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      video.style.display = 'block';
+      noCameraMsg.style.display = 'none';
+      frameGuide.style.display = 'block';
+      statusStrip.style.display = 'flex';
+      shutterRow.style.display = 'flex';
+      cameraToggleRow.style.display = 'none';
+      scanning = true;
+      setLed('off', 'Bersedia');
+      requestAnimationFrame(passiveLoop);
+    } catch (err){
+      console.error(err);
+      noCameraMsg.textContent = 'Tak dapat akses kamera. Semak kebenaran browser (perlukan HTTPS).';
+    }
+  }
+
+  function stopCamera(){
+    scanning = false;
+    if (stream){
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+  }
+
+  function setLed(state, text){
+    ledIndicator.className = 'led' + (state === 'green' ? ' on-green' : state === 'red' ? ' on-red' : state === 'amber' ? ' on-amber' : '');
+    statusText.textContent = text;
+  }
+
+  // ---------- Passive scan loop ----------
+  const CARDINAL_ANGLES = [0, 90, 180, 270];
+  const SWEEP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
+  const LOCK_DISPLAY_MS = 1600;
+
+  async function passiveLoop(){
+    if (!scanning) return;
+
+    const now = performance.now();
+    if (busy || (now - lastLockTime < LOCK_DISPLAY_MS)){
+      requestAnimationFrame(passiveLoop);
+      return;
+    }
+
+    if (!targetCode){
+      setLed('amber', 'Tetapkan kod rujukan dahulu');
+      requestAnimationFrame(passiveLoop);
+      return;
+    }
+
+    if (sweepRequested){
+      sweepRequested = false;
+      await runScanPass(SWEEP_ANGLES, true);
+    } else {
+      await runScanPass(CARDINAL_ANGLES, false);
+    }
+
+    requestAnimationFrame(passiveLoop);
+  }
+
+  async function runScanPass(angles, isSweep){
+    busy = true;
+    setLed('amber', isSweep ? 'Sapuan penuh…' : 'Mengimbas…');
+    let bestResult = { distance: Infinity, text: '', angle: 0 };
+
+    try {
+      for (const angle of angles){
+        if (video.readyState < 2) continue;
+        const canvas = downscaleToCanvas(video, 1000, angle);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        let rawText;
+        try {
+          rawText = await ocrWithTimeout(dataUrl, 8000);
+        } catch (e){
+          continue; // timeout on this angle, try next
+        }
+        const stripped = stripText(rawText);
+        if (!stripped) continue;
+        const { distance } = bestFuzzyMatch(stripped, targetCode, 1);
+        debugLine.textContent = `${angle}° → "${stripped.slice(0,20)}" (jarak: ${distance === Infinity ? '-' : distance})`;
+        if (distance < bestResult.distance){
+          bestResult = { distance, text: stripped, angle };
+        }
+        if (distance <= 1) break; // good enough, stop early
+      }
+    } finally {
+      busy = false;
+    }
+
+    if (bestResult.distance <= 1){
+      matchCount++;
+      tallyMatch.textContent = matchCount;
+      setLed('green', `PADAN (${bestResult.angle}°, jarak ${bestResult.distance})`);
+      lastLockTime = performance.now();
+    } else if (bestResult.text){
+      noMatchCount++;
+      tallyNoMatch.textContent = noMatchCount;
+      setLed('red', `TAK PADAN — dibaca: ${bestResult.text.slice(0,16)}`);
+      lastLockTime = performance.now();
+    } else {
+      setLed('off', 'Tiada teks dikesan — laraskan sudut/jarak');
+    }
+  }
+
+})();
+</script>
+</body>
+</html>
