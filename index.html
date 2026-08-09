@@ -227,7 +227,7 @@
     </div>
   </div>
 
-  <footer><p>OCR berjalan terus dalam browser — tiada data dimuat naik</p></footer>
+  <footer><p>OCR berjalan terus dalam browser — tiada data dimuat naik</p><p id="buildTag" style="margin-top:4px;">build: v3</p></footer>
 </div>
 
 <script>
@@ -345,10 +345,15 @@
   });
   manualInput.addEventListener('input', () => setTarget(manualInput.value));
 
-  $('btnUploadRef').addEventListener('click', () => refFileInput.click());
+  $('btnUploadRef').addEventListener('click', () => {
+    console.log('[scanner] Upload button clicked, triggering file input');
+    refFileInput.click();
+  });
   refFileInput.addEventListener('change', async (e) => {
+    console.log('[scanner] File input change event fired. Files:', e.target.files.length);
     const file = e.target.files[0];
-    if (!file) return;
+    if (!file) { console.log('[scanner] No file selected'); return; }
+    console.log('[scanner] File selected:', file.name, file.size, 'bytes');
     showRefStatus('Memproses gambar…');
     try {
       const dataUrl = await fileToDownscaledDataUrl(file, 1000);
