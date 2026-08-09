@@ -192,6 +192,7 @@
     </div>
     <input type="text" id="manualInput" placeholder="cth. LB6W05" style="display:none; margin-top:10px;">
     <input type="file" id="refFileInput" accept="image/*" capture="environment">
+    <p id="refStatus" style="display:none; margin:10px 0 0; font-family:var(--mono); font-size:11.5px; color:var(--led-amber);">&nbsp;</p>
   </div>
 
   <!-- Camera panel -->
@@ -248,6 +249,12 @@
   const targetDisplay = $('targetDisplay');
   const manualInput = $('manualInput');
   const refFileInput = $('refFileInput');
+  const refStatus = $('refStatus');
+  function showRefStatus(msg, color){
+    refStatus.style.display = 'block';
+    refStatus.textContent = msg;
+    refStatus.style.color = color || 'var(--led-amber)';
+  }
   const video = $('video');
   const noCameraMsg = $('noCameraMsg');
   const frameGuide = $('frameGuide');
@@ -260,6 +267,11 @@
   const tallyMatch = $('tallyMatch');
   const tallyNoMatch = $('tallyNoMatch');
   const clock = $('clock');
+
+  // ---------- Sanity check: did the OCR library actually load? ----------
+  if (typeof Tesseract === 'undefined'){
+    showRefStatus('Enjin OCR gagal dimuat (rangkaian/CDN disekat). Cuba WiFi lain atau muat semula halaman.', 'var(--led-red)');
+  }
 
   // ---------- Clock (cosmetic, grounds the "device" feel) ----------
   setInterval(() => {
@@ -337,19 +349,21 @@
   refFileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    statusText.textContent = 'Membaca kod rujukan…';
+    showRefStatus('Memproses gambar…');
     try {
       const dataUrl = await fileToDownscaledDataUrl(file, 1000);
-      const text = await ocrWithTimeout(dataUrl, 8000);
+      showRefStatus('Memuat enjin OCR & membaca (kali pertama boleh ambil 10–20 saat)…');
+      const text = await ocrWithTimeout(dataUrl, 25000);
       const stripped = stripText(text);
       if (stripped){
         setTarget(stripped);
+        showRefStatus('Kod dikesan: ' + stripped, 'var(--led-green)');
       } else {
-        alert('Tak dapat kesan kod. Sila taip manual.');
+        showRefStatus('Tak dapat kesan sebarang teks. Sila taip manual.', 'var(--led-red)');
       }
     } catch (err){
-      console.error(err);
-      alert('OCR gagal / timeout. Sila taip kod manual.');
+      console.error('Ref OCR error:', err);
+      showRefStatus('Ralat: ' + (err && err.message ? err.message : 'tak diketahui') + ' — sila taip manual.', 'var(--led-red)');
     }
   });
 
@@ -403,12 +417,15 @@
   }
 
   async function ocrWithTimeout(imageSource, timeoutMs){
-    const worker = await getWorker();
-    const ocrPromise = worker.recognize(imageSource).then(r => r.data.text);
+    const runOcr = async () => {
+      const worker = await getWorker();
+      const result = await worker.recognize(imageSource);
+      return result.data.text;
+    };
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('OCR timeout')), timeoutMs)
+      setTimeout(() => reject(new Error('Terlalu lama / rangkaian perlahan (timeout)')), timeoutMs)
     );
-    return Promise.race([ocrPromise, timeoutPromise]);
+    return Promise.race([runOcr(), timeoutPromise]);
   }
 
   // ---------- Camera ----------
