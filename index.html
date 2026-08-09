@@ -227,7 +227,12 @@
     </div>
   </div>
 
-  <footer><p>OCR berjalan terus dalam browser — tiada data dimuat naik</p><p id="buildTag" style="margin-top:4px;">build: v3</p></footer>
+  <footer><p>OCR berjalan terus dalam browser — tiada data dimuat naik</p><p id="buildTag" style="margin-top:4px;">build: v4</p></footer>
+
+  <div class="panel" style="margin-top:14px;">
+    <p class="panel-label">Log Debug (untuk troubleshooting)</p>
+    <div id="debugLog" style="font-family:var(--mono); font-size:10.5px; line-height:1.5; color:var(--text-dim); max-height:180px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;">Menunggu tindakan…</div>
+  </div>
 </div>
 
 <script>
@@ -250,6 +255,23 @@
   const manualInput = $('manualInput');
   const refFileInput = $('refFileInput');
   const refStatus = $('refStatus');
+  const debugLog = $('debugLog');
+  const debugLines = [];
+  function dlog(msg){
+    const time = new Date().toLocaleTimeString('en-GB', { hour12:false });
+    debugLines.push(`[${time}] ${msg}`);
+    if (debugLines.length > 40) debugLines.shift();
+    debugLog.textContent = debugLines.join('\n');
+    debugLog.scrollTop = debugLog.scrollHeight;
+    console.log(msg);
+  }
+  window.addEventListener('error', (e) => {
+    dlog('WINDOW ERROR: ' + e.message + ' @ ' + e.filename + ':' + e.lineno);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    dlog('UNHANDLED PROMISE REJECTION: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+  dlog('Page dimuat. Tesseract defined? ' + (typeof Tesseract !== 'undefined'));
   function showRefStatus(msg, color){
     refStatus.style.display = 'block';
     refStatus.textContent = msg;
@@ -346,28 +368,40 @@
   manualInput.addEventListener('input', () => setTarget(manualInput.value));
 
   $('btnUploadRef').addEventListener('click', () => {
-    console.log('[scanner] Upload button clicked, triggering file input');
-    refFileInput.click();
+    dlog('Butang "Muat Naik Gambar" ditekan → membuka file picker');
+    try {
+      refFileInput.click();
+      dlog('refFileInput.click() dipanggil tanpa ralat');
+    } catch(err){
+      dlog('RALAT semasa .click(): ' + err.message);
+    }
   });
   refFileInput.addEventListener('change', async (e) => {
-    console.log('[scanner] File input change event fired. Files:', e.target.files.length);
+    dlog('Event "change" pada file input tercetus. Bilangan fail: ' + e.target.files.length);
     const file = e.target.files[0];
-    if (!file) { console.log('[scanner] No file selected'); return; }
-    console.log('[scanner] File selected:', file.name, file.size, 'bytes');
+    if (!file) { dlog('Tiada fail dipilih (mungkin batal)'); return; }
+    dlog('Fail dipilih: ' + file.name + ', ' + file.size + ' bytes, jenis: ' + file.type);
     showRefStatus('Memproses gambar…');
     try {
+      dlog('Memulakan downscale imej…');
       const dataUrl = await fileToDownscaledDataUrl(file, 1000);
+      dlog('Downscale siap. Panjang dataURL: ' + dataUrl.length);
       showRefStatus('Memuat enjin OCR & membaca (kali pertama boleh ambil 10–20 saat)…');
+      dlog('Memanggil ocrWithTimeout…');
       const text = await ocrWithTimeout(dataUrl, 25000);
+      dlog('OCR siap. Teks mentah: "' + text.replace(/\n/g,' ') + '"');
       const stripped = stripText(text);
       if (stripped){
         setTarget(stripped);
         showRefStatus('Kod dikesan: ' + stripped, 'var(--led-green)');
+        dlog('Kod ditetapkan: ' + stripped);
       } else {
         showRefStatus('Tak dapat kesan sebarang teks. Sila taip manual.', 'var(--led-red)');
+        dlog('OCR pulangkan teks kosong selepas strip');
       }
     } catch (err){
       console.error('Ref OCR error:', err);
+      dlog('RALAT dalam proses OCR: ' + (err && err.message ? err.message : String(err)));
       showRefStatus('Ralat: ' + (err && err.message ? err.message : 'tak diketahui') + ' — sila taip manual.', 'var(--led-red)');
     }
   });
